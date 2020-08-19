@@ -5,11 +5,11 @@
  * Description: Take credit card payments on your store using Stripe.
  * Author: WooCommerce
  * Author URI: https://woocommerce.com/
- * Version: 4.3.2
+ * Version: 4.5.1
  * Requires at least: 4.4
- * Tested up to: 5.3.2
- * WC requires at least: 2.6
- * WC tested up to: 3.9.2
+ * Tested up to: 5.5
+ * WC requires at least: 3.0
+ * WC tested up to: 4.3
  * Text Domain: woocommerce-gateway-stripe
  * Domain Path: /languages
  *
@@ -18,6 +18,17 @@
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
+
+/**
+ * Required minimums and constants
+ */
+define( 'WC_STRIPE_VERSION', '4.5.1' );
+define( 'WC_STRIPE_MIN_PHP_VER', '5.6.0' );
+define( 'WC_STRIPE_MIN_WC_VER', '3.0' );
+define( 'WC_STRIPE_FUTURE_MIN_WC_VER', '3.0' );
+define( 'WC_STRIPE_MAIN_FILE', __FILE__ );
+define( 'WC_STRIPE_PLUGIN_URL', untrailingslashit( plugins_url( basename( plugin_dir_path( __FILE__ ) ), basename( __FILE__ ) ) ) );
+define( 'WC_STRIPE_PLUGIN_PATH', untrailingslashit( plugin_dir_path( __FILE__ ) ) );
 
 // phpcs:disable WordPress.Files.FileName
 
@@ -32,6 +43,84 @@ function woocommerce_stripe_missing_wc_notice() {
 	echo '<div class="error"><p><strong>' . sprintf( esc_html__( 'Stripe requires WooCommerce to be installed and active. You can download %s here.', 'woocommerce-gateway-stripe' ), '<a href="https://woocommerce.com/" target="_blank">WooCommerce</a>' ) . '</strong></p></div>';
 }
 
+/**
+ * WooCommerce not supported fallback notice.
+ *
+ * @since 4.4.0
+ * @return string
+ */
+function woocommerce_stripe_wc_not_supported() {
+	/* translators: $1. Minimum WooCommerce version. $2. Current WooCommerce version. */
+	echo '<div class="error"><p><strong>' . sprintf( esc_html__( 'Stripe requires WooCommerce %1$s or greater to be installed and active. WooCommerce %2$s is no longer supported.', 'woocommerce-gateway-stripe' ), WC_STRIPE_MIN_WC_VER, WC_VERSION ) . '</strong></p></div>';
+}
+
+/**
+ * WooCommerce country not supported notice.
+ *
+ * @since 4.5.1
+ * @return string
+ */
+function woocommerce_stripe_wc_country_not_supported() {
+	echo '<div class="error"><p><strong>' . __( 'Stripe is not available in your store\'s country and will not be available for buyers to choose during checkout.', 'woocommerce-gateway-stripe' ) . '</strong></p></div>';
+}
+
+/**
+ * Check that the WooCommerce country is supported by Stripe.
+ * See https://stripe.com/global for list.
+ *
+ * @since 4.5.1
+ * @return bool
+ */
+function woocommerce_stripe_wc_country_is_supported_country() {
+	$wc_default_country = substr( get_option( 'woocommerce_default_country' ), 0, 2 );
+
+	$supported_countries = apply_filters(
+		'wc_stripe_supported_countries',
+		array(
+			'AT', // Austria
+			'AU', // Australia
+			'BE', // Belgium
+			'BG', // Bulgaria
+			'CA', // Canada
+			'CY', // Cyprus
+			'CZ', // Czech Republic
+			'DK', // Denmark
+			'EE', // Estonia
+			'FI', // Finland
+			'FR', // France
+			'DE', // Germany
+			'GR', // Greece
+			'HK', // Hong Kong
+			'IE', // Ireland
+			'IT', // Italy
+			'JP', // Japan
+			'LV', // Latvia
+			'LT', // Lithuania
+			'LU', // Luxembourg
+			'MY', // Malaysia
+			'MT', // Malta
+			'MX', // Mexico
+			'NL', // Netherlands
+			'NZ', // New Zealand
+			'NO', // Norway
+			'PL', // Poland
+			'PR', // Puerto Rico #1203
+			'PT', // Portugal
+			'RO', // Romania
+			'SG', // Singapore
+			'SK', // Slovakia
+			'SI', // Slovenia
+			'ES', // Spain
+			'SE', // Sweden
+			'CH', // Switzerland
+			'GB', // United Kingdom (UK)
+			'US'  // United States (US)
+		)
+	);
+
+	return in_array( $wc_default_country, $supported_countries );
+}
+
 add_action( 'plugins_loaded', 'woocommerce_gateway_stripe_init' );
 
 function woocommerce_gateway_stripe_init() {
@@ -42,16 +131,17 @@ function woocommerce_gateway_stripe_init() {
 		return;
 	}
 
+	if ( version_compare( WC_VERSION, WC_STRIPE_MIN_WC_VER, '<' ) ) {
+		add_action( 'admin_notices', 'woocommerce_stripe_wc_not_supported' );
+		return;
+	}
+
+	if ( ! woocommerce_stripe_wc_country_is_supported_country() ) {
+		add_action( 'admin_notices', 'woocommerce_stripe_wc_country_not_supported' );
+		return;
+	}
+
 	if ( ! class_exists( 'WC_Stripe' ) ) :
-		/**
-		 * Required minimums and constants
-		 */
-		define( 'WC_STRIPE_VERSION', '4.3.2' );
-		define( 'WC_STRIPE_MIN_PHP_VER', '5.6.0' );
-		define( 'WC_STRIPE_MIN_WC_VER', '2.6.0' );
-		define( 'WC_STRIPE_MAIN_FILE', __FILE__ );
-		define( 'WC_STRIPE_PLUGIN_URL', untrailingslashit( plugins_url( basename( plugin_dir_path( __FILE__ ) ), basename( __FILE__ ) ) ) );
-		define( 'WC_STRIPE_PLUGIN_PATH', untrailingslashit( plugin_dir_path( __FILE__ ) ) );
 
 		class WC_Stripe {
 
@@ -144,6 +234,7 @@ function woocommerce_gateway_stripe_init() {
 
 				add_filter( 'woocommerce_payment_gateways', array( $this, 'add_gateways' ) );
 				add_filter( 'plugin_action_links_' . plugin_basename( __FILE__ ), array( $this, 'plugin_action_links' ) );
+				add_filter( 'plugin_row_meta', array( $this, 'plugin_row_meta' ), 10, 2 );
 
 				// Modify emails emails.
 				add_filter( 'woocommerce_email_classes', array( $this, 'add_emails' ), 20 );
@@ -187,7 +278,7 @@ function woocommerce_gateway_stripe_init() {
 			}
 
 			/**
-			 * Adds plugin action links.
+			 * Add plugin action links.
 			 *
 			 * @since 1.0.0
 			 * @version 4.0.0
@@ -195,10 +286,27 @@ function woocommerce_gateway_stripe_init() {
 			public function plugin_action_links( $links ) {
 				$plugin_links = array(
 					'<a href="admin.php?page=wc-settings&tab=checkout&section=stripe">' . esc_html__( 'Settings', 'woocommerce-gateway-stripe' ) . '</a>',
-					'<a href="https://docs.woocommerce.com/document/stripe/">' . esc_html__( 'Docs', 'woocommerce-gateway-stripe' ) . '</a>',
-					'<a href="https://woocommerce.com/my-account/create-a-ticket?broken=primary&select=18627">' . esc_html__( 'Support', 'woocommerce-gateway-stripe' ) . '</a>',
 				);
 				return array_merge( $plugin_links, $links );
+			}
+
+			/**
+			 * Add plugin action links.
+			 *
+			 * @since 4.3.4
+			 * @param  array  $links Original list of plugin links.
+			 * @param  string $file  Name of current file.
+			 * @return array  $links Update list of plugin links.
+			 */
+			public function plugin_row_meta( $links, $file ) {
+				if ( plugin_basename( __FILE__ ) === $file ) {
+					$row_meta = array(
+						'docs'    => '<a href="' . esc_url( apply_filters( 'woocommerce_gateway_stripe_docs_url', 'https://docs.woocommerce.com/document/stripe/' ) ) . '" title="' . esc_attr( __( 'View Documentation', 'woocommerce-gateway-stripe' ) ) . '">' . __( 'Docs', 'woocommerce-gateway-stripe' ) . '</a>',
+						'support' => '<a href="' . esc_url( apply_filters( 'woocommerce_gateway_stripe_support_url', 'https://woocommerce.com/my-account/create-a-ticket?select=18627' ) ) . '" title="' . esc_attr( __( 'Open a support request at WooCommerce.com', 'woocommerce-gateway-stripe' ) ) . '">' . __( 'Support', 'woocommerce-gateway-stripe' ) . '</a>',
+					);
+					return array_merge( $links, $row_meta );
+				}
+				return (array) $links;
 			}
 
 			/**
